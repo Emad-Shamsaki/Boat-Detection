@@ -1,0 +1,391 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "1.ipynb",
+      "provenance": [],
+      "collapsed_sections": []
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "YEBabvpR-Wdk"
+      },
+      "source": [
+        "from bs4 import BeautifulSoup\n",
+        "from imutils import paths\n",
+        "import cv2\n",
+        "import os\n",
+        "import importlib\n",
+        "#load the provided config file from your own directory\n",
+        "config = importlib.machinery.SourceFileLoader('/content/drive/MyDrive/R-CNN/pyramidsearch', '/content/drive/MyDrive/R-CNN/pyramidsearch/config.py').load_module()\n"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "4u2dnokAL8Oj",
+        "outputId": "a070b02c-d919-4cd0-d781-e533df962513"
+      },
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')"
+      ],
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "Drive already mounted at /content/drive; to attempt to forcibly remount, call drive.mount(\"/content/drive\", force_remount=True).\n"
+          ],
+          "name": "stdout"
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "pk6WwescK-9Z"
+      },
+      "source": [
+        "def compute_iou(boxA, boxB):\n",
+        "    # determine the (x, y)-coordinates of the intersection rectangle\n",
+        "    xA = max(boxA[0], boxB[0])\n",
+        "    yA = max(boxA[1], boxB[1])\n",
+        "    xB = min(boxA[2], boxB[2])\n",
+        "    yB = min(boxA[3], boxB[3])\n",
+        "    # compute the area of intersection rectangle\n",
+        "    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)\n",
+        "    # compute the area of both the prediction and ground-truth\n",
+        "    # rectangles\n",
+        "    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)\n",
+        "    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)\n",
+        "    # compute the intersection over union by taking the intersection\n",
+        "    # area and dividing it by the sum of prediction + ground-truth\n",
+        "    # areas - the intersection area\n",
+        "    iou = interArea / float(boxAArea + boxBArea - interArea)\n",
+        "    # return the intersection over union value\n",
+        "    return iou"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "NTMfFwBRDj-C"
+      },
+      "source": [
+        "\n",
+        "# loop over the output positive and negative directories\n",
+        "for dirPath in (config.POSITVE_PATH, config.NEGATIVE_PATH):\n",
+        "    # if the output directory does not exist yet, create it\n",
+        "    if not os.path.exists(dirPath):\n",
+        "        os.makedirs(dirPath)\n",
+        "\n",
+        "# grab all image paths in the input images directory\n",
+        "imagePaths = list(paths.list_images(config.ORIG_IMAGES))\n",
+        "annPaths = list(paths.list_images(config.ORIG_ANNOTS))\n",
+        "\n",
+        "print(imagePaths)\n",
+        "\n",
+        "# initialize the total number of positive and negative images we have\n",
+        "# saved to disk so far\n",
+        "totalPositive = 0\n",
+        "totalNegative = 0\n",
+        "\n",
+        "# loop over the image paths\n",
+        "for (i, imagePath) in enumerate(imagePaths):\n",
+        "    # show a progress report\n",
+        "    print(\"[INFO] processing image {}/{}...\".format(i + 1, len(imagePaths)))\n",
+        "\n",
+        "\n",
+        "    # extract the filename from the file path and use it to derive\n",
+        "    # the path to the XML annotation file\n",
+        "    filename = imagePath.split(os.path.sep)[-1]\n",
+        "    filename = filename[:filename.rfind(\".\")]\n",
+        "    annotPath = os.path.sep.join([config.ORIG_ANNOTS, \"{}.xml\".format(filename)])\n",
+        "\n",
+        "    # load the annotation file, build the soup, and initialize our\n",
+        "    # list of ground-truth bounding boxes\n",
+        "    contents = open(annotPath).read()\n",
+        "    soup = BeautifulSoup(contents, \"html.parser\")\n",
+        "    gtBoxes = []\n",
+        "\n",
+        "    # extract the image dimensions\n",
+        "    w = int(soup.find(\"width\").string)\n",
+        "    h = int(soup.find(\"height\").string)\n",
+        "\n",
+        "    # loop over all 'object' elements\n",
+        "    for o in soup.find_all(\"object\"):\n",
+        "        # extract the label and bounding box coordinates\n",
+        "        label = o.find(\"name\").string\n",
+        "        xMin = int(o.find(\"xmin\").string)\n",
+        "        yMin = int(o.find(\"ymin\").string)\n",
+        "        xMax = int(o.find(\"xmax\").string)\n",
+        "        yMax = int(o.find(\"ymax\").string)\n",
+        "\n",
+        "        # truncate any bounding box coordinates that may fall\n",
+        "        # outside the boundaries of the image\n",
+        "        xMin = max(0, xMin)\n",
+        "        yMin = max(0, yMin)\n",
+        "        xMax = min(w, xMax)\n",
+        "        yMax = min(h, yMax)\n",
+        "\n",
+        "        # update our list of ground-truth bounding boxes\n",
+        "        gtBoxes.append((xMin, yMin, xMax, yMax))\n",
+        "\n",
+        "    # load the input image from disk\n",
+        "    image = cv2.imread(imagePath)\n",
+        "\n",
+        "    # run selective search on the image and initialize our list of\n",
+        "    # proposed boxes\n",
+        "    ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()\n",
+        "    ss.addImage(image)\n",
+        "    gs = cv2.ximgproc.segmentation.createGraphSegmentation()\n",
+        "    # gs.setK(150)\n",
+        "    # gs.setSigma(0.8)\n",
+        "    ss.addGraphSegmentation(gs) \n",
+        "    strategy_color = cv2.ximgproc.segmentation.createSelectiveSearchSegmentationStrategyColor()\n",
+        "    strategy_fill = cv2.ximgproc.segmentation.createSelectiveSearchSegmentationStrategyFill()\n",
+        "    strategy_size = cv2.ximgproc.segmentation.createSelectiveSearchSegmentationStrategySize()\n",
+        "    strategy_texture = cv2.ximgproc.segmentation.createSelectiveSearchSegmentationStrategyTexture()\n",
+        "    strategy_multiple = cv2.ximgproc.segmentation.createSelectiveSearchSegmentationStrategyMultiple(\n",
+        "        strategy_color, strategy_fill, strategy_size, strategy_texture)\n",
+        "    ss.addStrategy(strategy_multiple)\n",
+        "\n",
+        "    rects = ss.process()\n",
+        "    #print(\"Total proposals = \", len(rects))\n",
+        "    proposedRects = []\n",
+        "\n",
+        "    for (x, y, w, h) in rects:\n",
+        "        # convert our bounding boxes from (x, y, w, h) to (startX,\n",
+        "        # startY, startX, endY)\n",
+        "        proposedRects.append((x, y, x + w, y + h))\n",
+        "\n",
+        "    # initialize counters used to count the number of positive and\n",
+        "    # negative ROIs saved thus far\n",
+        "    positiveROIs = 0\n",
+        "    negativeROIs = 0\n",
+        "\n",
+        "    # loop over the maximum number of region proposals\n",
+        "    for proposedRect in proposedRects[:config.MAX_PROPOSALS]:\n",
+        "        # unpack the proposed rectangle bounding box\n",
+        "        (propStartX, propStartY, propEndX, propEndY) = proposedRect\n",
+        "\n",
+        "        # loop over the ground-truth bounding boxes\n",
+        "        for gtBox in gtBoxes:\n",
+        "            # compute the intersection over union between the two\n",
+        "            # boxes and unpack the ground-truth bounding box\n",
+        "            iou = compute_iou(gtBox, proposedRect)\n",
+        "            (gtStartX, gtStartY, gtEndX, gtEndY) = gtBox\n",
+        "\n",
+        "            # initialize the ROI and output path\n",
+        "            roi = None\n",
+        "            outputPath = None\n",
+        "\n",
+        "            # check to see if the IOU is greater than 70% *and* that\n",
+        "            # we have not hit our positive count limit\n",
+        "            if iou > 0.7 and positiveROIs <= config.MAX_POSITIVE:\n",
+        "                # extract the ROI and then derive the output path to\n",
+        "                # the positive instance\n",
+        "                roi = image[propStartY:propEndY, propStartX:propEndX]\n",
+        "                filename = \"{}.png\".format(totalPositive)\n",
+        "                outputPath = os.path.sep.join([config.POSITVE_PATH, filename])\n",
+        "\n",
+        "\n",
+        "                # increment the positive counters\n",
+        "                positiveROIs += 1\n",
+        "                totalPositive += 1\n",
+        "\n",
+        "            # determine if the proposed bounding box falls *within*\n",
+        "            # the ground-truth bounding box\n",
+        "            fullOverlap = propStartX >= gtStartX\n",
+        "            fullOverlap = fullOverlap and propStartY >= gtStartY\n",
+        "            fullOverlap = fullOverlap and propEndX <= gtEndX\n",
+        "            fullOverlap = fullOverlap and propEndY <= gtEndY\n",
+        "\n",
+        "            # check to see if there is not full overlap *and* the IoU\n",
+        "            # is less than 5% *and* we have not hit our negative\n",
+        "            # count limit\n",
+        "            if not fullOverlap and iou < 0.05 and negativeROIs <= config.MAX_NEGATIVE:\n",
+        "\n",
+        "                # extract the ROI and then derive the output path to\n",
+        "                # the negative instance\n",
+        "                roi = image[propStartY:propEndY, propStartX:propEndX]\n",
+        "                filename = \"{}.png\".format(totalNegative)\n",
+        "                outputPath = os.path.sep.join([config.NEGATIVE_PATH, filename])\n",
+        "\n",
+        "\n",
+        "                # increment the negative counters\n",
+        "                negativeROIs += 1\n",
+        "                totalNegative += 1\n",
+        "\n",
+        "            # check to see if both the ROI and output path are valid\n",
+        "            if roi is not None and outputPath is not None:\n",
+        "                # resize the ROI to the input dimensions of the CNN\n",
+        "                # that we'll be fine-tuning, then write the ROI to\n",
+        "                # disk\n",
+        "                roi = cv2.resize(roi, config.INPUT_DIMS, interpolation=cv2.INTER_CUBIC)\n",
+        "\n",
+        "                cv2.imwrite(outputPath, roi)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "FimxK32YPQ6F",
+        "outputId": "73ffaba2-5087-4b74-ae78-20236e6f72c3"
+      },
+      "source": [
+        "totalPositive"
+      ],
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "47"
+            ]
+          },
+          "metadata": {
+            "tags": []
+          },
+          "execution_count": 16
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "rFi5ayke8nlX"
+      },
+      "source": [
+        "!wget /content/drive/MyDrive/DATASET.7z"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "b1Gzzwg_88T1"
+      },
+      "source": [
+        "!apt-get install p7zip-full\n",
+        "!p7zip -d '/content/drive/MyDrive/DATASET.7zY'"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "r22BjFMENMlF"
+      },
+      "source": [
+        " #----------------------------   \n",
+        "    #ss.setBaseImage(image)\n",
+        "    #ss.switchToSelectiveSearchFast()\n",
+        "    #rects = ss.process()\n",
+        "    #proposedRects = []\n",
+        "    #---------------------------\n",
+        "    # loop over the rectangles generated by selective search\n",
+        "    for (x, y, w, h) in rects:\n",
+        "        # convert our bounding boxes from (x, y, w, h) to (startX,\n",
+        "        # startY, startX, endY)\n",
+        "        proposedRects.append((x, y, x + w, y + h))\n",
+        "\n",
+        "    # initialize counters used to count the number of positive and\n",
+        "    # negative ROIs saved thus far\n",
+        "    positiveROIs = 0\n",
+        "    negativeROIs = 0\n",
+        "\n",
+        "    # loop over the maximum number of region proposals\n",
+        "    for proposedRect in proposedRects[:config.MAX_PROPOSALS]:\n",
+        "        # unpack the proposed rectangle bounding box\n",
+        "        (propStartX, propStartY, propEndX, propEndY) = proposedRect\n",
+        "\n",
+        "        # loop over the ground-truth bounding boxes\n",
+        "        for gtBox in gtBoxes:\n",
+        "            # compute the intersection over union between the two\n",
+        "            # boxes and unpack the ground-truth bounding box\n",
+        "            iou = compute_iou(gtBox, proposedRect)\n",
+        "            (gtStartX, gtStartY, gtEndX, gtEndY) = gtBox\n",
+        "\n",
+        "            # initialize the ROI and output path\n",
+        "            roi = None\n",
+        "            outputPath = None\n",
+        "\n",
+        "            # check to see if the IOU is greater than 70% *and* that\n",
+        "            # we have not hit our positive count limit\n",
+        "            if iou > 0.7 and positiveROIs <= config.MAX_POSITIVE:\n",
+        "                # extract the ROI and then derive the output path to\n",
+        "                # the positive instance\n",
+        "                roi = image[propStartY:propEndY, propStartX:propEndX]\n",
+        "                filename = \"{}.png\".format(totalPositive)\n",
+        "                outputPath = os.path.sep.join([config.POSITVE_PATH, filename])\n",
+        "\n",
+        "\n",
+        "                # increment the positive counters\n",
+        "                positiveROIs += 1\n",
+        "                totalPositive += 1\n",
+        "\n",
+        "            # determine if the proposed bounding box falls *within*\n",
+        "            # the ground-truth bounding box\n",
+        "            fullOverlap = propStartX >= gtStartX\n",
+        "            fullOverlap = fullOverlap and propStartY >= gtStartY\n",
+        "            fullOverlap = fullOverlap and propEndX <= gtEndX\n",
+        "            fullOverlap = fullOverlap and propEndY <= gtEndY\n",
+        "\n",
+        "            # check to see if there is not full overlap *and* the IoU\n",
+        "            # is less than 5% *and* we have not hit our negative\n",
+        "            # count limit\n",
+        "            if not fullOverlap and iou < 0.05 and negativeROIs <= config.MAX_NEGATIVE:\n",
+        "\n",
+        "                # extract the ROI and then derive the output path to\n",
+        "                # the negative instance\n",
+        "                roi = image[propStartY:propEndY, propStartX:propEndX]\n",
+        "                filename = \"{}.png\".format(totalNegative)\n",
+        "                outputPath = os.path.sep.join([config.NEGATIVE_PATH, filename])\n",
+        "\n",
+        "\n",
+        "                # increment the negative counters\n",
+        "                negativeROIs += 1\n",
+        "                totalNegative += 1\n",
+        "\n",
+        "            # check to see if both the ROI and output path are valid\n",
+        "            if roi is not None and outputPath is not None:\n",
+        "                # resize the ROI to the input dimensions of the CNN\n",
+        "                # that we'll be fine-tuning, then write the ROI to\n",
+        "                # disk\n",
+        "                roi = cv2.resize(roi, config.INPUT_DIMS, interpolation=cv2.INTER_CUBIC)\n",
+        "\n",
+        "                cv2.imwrite(outputPath, roi)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
