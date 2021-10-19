@@ -10,4 +10,4 @@ on the image to get better regions. These preprocessing steps could be erosion a
 noise filtering, sharpening image and resizing. To evaluate our job, we need to use a evaluation
 function such as intersection over unions or briefly IoU.
 
-For more information, click [here](https://drive.google.com/file/d/1-m_EJm1dRCm3pKe2JuVNO4bwoT57mpow/view?usp=sharing).
+For more information, click [here](https://drive.google.com/file/d/1bulyuTbCot1cmKCyjARkDevwaNQurCer/view?usp=sharing).
